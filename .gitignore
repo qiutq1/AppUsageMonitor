@@ -1,0 +1,7 @@
+build
+release
+local.properties
+
+.idea
+.kotlin
+.gradle
