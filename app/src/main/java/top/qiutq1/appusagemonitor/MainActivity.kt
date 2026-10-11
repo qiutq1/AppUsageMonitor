@@ -1,7 +1,6 @@
 package top.qiutq1.appusagemonitor
 
 import android.app.AppOpsManager
-import android.app.DatePickerDialog
 import android.app.usage.UsageEvents
 import android.app.usage.UsageStatsManager
 import android.content.Context
@@ -67,7 +66,7 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-@OptIn(ExperimentalFoundationApi::class)
+@OptIn(ExperimentalMaterial3Api::class)
 private fun UsageScreen() {
     val context = LocalContext.current
     val prefs = remember { context.getSharedPreferences("monitor", Context.MODE_PRIVATE) }
@@ -322,45 +321,38 @@ private fun UsageScreen() {
         confirmButton = { TextButton(onClick = { showApps = false; refresh() }) { Text("完成") } }
     )
 
-    if (showDateRange) AlertDialog(
-        onDismissRequest = { showDateRange = false },
-        title = { Text("选择查看范围") },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(onClick = {
-                    val current = Calendar.getInstance().apply { timeInMillis = draftStartMillis }
-                    DatePickerDialog(context, { _, year, month, day ->
-                        draftStartMillis = localDayMillis(year, month, day)
-                        if (draftStartMillis > draftEndMillis) draftEndMillis = draftStartMillis
-                    }, current.get(Calendar.YEAR), current.get(Calendar.MONTH), current.get(Calendar.DAY_OF_MONTH)).apply {
-                        datePicker.maxDate = endOfLocalDayMillis(draftEndMillis)
-                    }.show()
-                }, modifier = Modifier.fillMaxWidth()) {
-                    Text("开始日期：${formatDate(draftStartMillis)}")
-                }
-                OutlinedButton(onClick = {
-                    val current = Calendar.getInstance().apply { timeInMillis = draftEndMillis }
-                    DatePickerDialog(context, { _, year, month, day ->
-                        draftEndMillis = localDayMillis(year, month, day)
-                        if (draftEndMillis < draftStartMillis) draftStartMillis = draftEndMillis
-                    }, current.get(Calendar.YEAR), current.get(Calendar.MONTH), current.get(Calendar.DAY_OF_MONTH)).apply {
-                        datePicker.maxDate = System.currentTimeMillis()
-                    }.show()
-                }, modifier = Modifier.fillMaxWidth()) {
-                    Text("结束日期：${formatDate(draftEndMillis)}")
-                }
-                Text("包含开始和结束日期的全部记录。", color = Color(0xFF68736D), style = MaterialTheme.typography.bodySmall)
+    if (showDateRange) {
+        val todayUtcMillis = remember { pickerUtcMillis(startOfTodayMillis()) }
+        val dateRangeState = rememberDateRangePickerState(
+            initialSelectedStartDateMillis = pickerUtcMillis(draftStartMillis),
+            initialSelectedEndDateMillis = pickerUtcMillis(draftEndMillis),
+            selectableDates = object : SelectableDates {
+                override fun isSelectableDate(utcTimeMillis: Long): Boolean = utcTimeMillis <= todayUtcMillis
             }
-        },
-        confirmButton = { TextButton(onClick = {
-            rangeStartMillis = draftStartMillis
-            rangeEndMillis = draftEndMillis
-            showDateRange = false
-            refresh()
-        }) { Text("查看") } },
-        dismissButton = { TextButton(onClick = { showDateRange = false }) { Text("取消") } }
-    )
-
+        )
+        DatePickerDialog(
+            onDismissRequest = { showDateRange = false },
+            confirmButton = { TextButton(onClick = {
+                dateRangeState.selectedStartDateMillis?.let { draftStartMillis = localMillisFromPickerUtc(it) }
+                dateRangeState.selectedEndDateMillis?.let { draftEndMillis = localMillisFromPickerUtc(it) }
+                rangeStartMillis = draftStartMillis
+                rangeEndMillis = draftEndMillis
+                showDateRange = false
+                refresh()
+            }) { Text("查看") } },
+            dismissButton = { TextButton(onClick = { showDateRange = false }) { Text("取消") } }
+        ) {
+            DateRangePicker(
+                state = dateRangeState,
+                modifier = Modifier.heightIn(max = 560.dp),
+                title = { Text("选择查看范围", modifier = Modifier.padding(start = 24.dp, top = 16.dp)) },
+                headline = {
+                    Text("${dateRangeState.selectedStartDateMillis?.let { formatDate(localMillisFromPickerUtc(it)) } ?: "开始日期"} – ${dateRangeState.selectedEndDateMillis?.let { formatDate(localMillisFromPickerUtc(it)) } ?: "结束日期"}")
+                },
+                showModeToggle = false
+            )
+        }
+    }
     selectedApp?.let { app ->
         val appRecords = records.filter { it.app.packageName == app.packageName }.asReversed()
         AlertDialog(
@@ -568,11 +560,18 @@ private fun localDayMillis(year: Int, month: Int, day: Int): Long = Calendar.get
     set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0); set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
 }.timeInMillis
 
-private fun endOfLocalDayMillis(dayStart: Long): Long = Calendar.getInstance().apply {
-    timeInMillis = dayStart
-    add(Calendar.DAY_OF_YEAR, 1)
-    add(Calendar.MILLISECOND, -1)
-}.timeInMillis
+private fun pickerUtcMillis(localMillis: Long): Long {
+    val localDate = Calendar.getInstance().apply { timeInMillis = localMillis }
+    return Calendar.getInstance(java.util.TimeZone.getTimeZone("UTC"), Locale.ROOT).apply {
+        clear()
+        set(localDate.get(Calendar.YEAR), localDate.get(Calendar.MONTH), localDate.get(Calendar.DAY_OF_MONTH))
+    }.timeInMillis
+}
+
+private fun localMillisFromPickerUtc(utcMillis: Long): Long {
+    val utcDate = Calendar.getInstance(java.util.TimeZone.getTimeZone("UTC"), Locale.ROOT).apply { timeInMillis = utcMillis }
+    return localDayMillis(utcDate.get(Calendar.YEAR), utcDate.get(Calendar.MONTH), utcDate.get(Calendar.DAY_OF_MONTH))
+}
 
 private fun exportCsv(context: Context, uri: Uri, records: List<OpenRecord>) {
         context.contentResolver.openOutputStream(uri)?.use { stream ->
